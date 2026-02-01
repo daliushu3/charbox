@@ -65,7 +65,9 @@ async function decompressZlib(data: Uint8Array): Promise<Uint8Array> {
   try {
     const ds = new DecompressionStream('deflate');
     const writer = ds.writable.getWriter();
-    writer.write(data.buffer.slice(0));
+    const ab = new ArrayBuffer(data.byteLength);
+new Uint8Array(ab).set(data);
+writer.write(ab);
     writer.close();
     const output = [];
     const reader = ds.readable.getReader();

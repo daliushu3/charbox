@@ -1,0 +1,5 @@
+{
+  "name": "Nexus Archive: SillyTavern Dossier Manager",
+  "description": "A futuristic, sci-fi styled PNG character card manager for SillyTavern. Allows reading, editing, and archiving character data with local IndexedDB storage and PNG metadata extraction.",
+  "requestFramePermissions": []
+}

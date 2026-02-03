@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CharacterDataV2 } from '../types';
-import { X, Save, Image as ImageIcon, Plus, Trash2, Database, Download, MessageSquare, BookOpen, Quote, Copy, Check, FileJson } from 'lucide-react';
+import { X, Save, Image as ImageIcon, Plus, Trash2, Database, Download, MessageSquare, BookOpen, Quote, Copy, Check, FileJson, Maximize2, Minimize2 } from 'lucide-react';
 import { createCharacterPNG } from '../services/pngUtils';
 
 interface DossierViewProps {
@@ -12,18 +12,60 @@ interface DossierViewProps {
   onSave: (data: CharacterDataV2, imageFile: File | null) => void;
 }
 
+interface ExpandedEditorProps {
+  title: string;
+  value: string;
+  onChange: (val: string) => void;
+  onClose: () => void;
+}
+
+const FullscreenEditor: React.FC<ExpandedEditorProps> = ({ title, value, onChange, onClose }) => {
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-slate-950 flex flex-col font-sans">
+      <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6 shrink-0 bg-slate-900">
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+          <h2 className="text-cyan-400 font-mono text-xs font-bold uppercase tracking-[0.3em]">{title}</h2>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-[10px] font-mono text-slate-500">{value.length} CHARACTERS</span>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-white transition-colors bg-slate-800 rounded">
+            <Minimize2 size={20} />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 p-6 md:p-12 overflow-hidden flex flex-col bg-slate-950 cyber-grid">
+        <textarea
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="TYPE_SYSTEM_INPUT..."
+          className="flex-1 w-full bg-transparent text-slate-200 text-lg md:text-xl font-sans leading-relaxed focus:outline-none resize-none scrollbar-thin placeholder:text-slate-800"
+        />
+      </div>
+      <div className="h-10 border-t border-slate-900 flex items-center px-6 justify-between bg-slate-900 shrink-0">
+        <div className="text-[8px] font-mono text-slate-600 uppercase tracking-widest">Nexus Expanded Editor v1.0</div>
+        <div className="text-[8px] font-mono text-slate-600 uppercase tracking-widest">Press ESC to return</div>
+      </div>
+    </div>
+  );
+};
+
 const CopyButton: React.FC<{ text: string }> = ({ text }) => {
   const [copied, setCopied] = useState(false);
-
   const handleCopy = async () => {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy text: ', err);
-    }
+    } catch (err) { console.error('Copy failed: ', err); }
   };
 
   return (
@@ -44,6 +86,9 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
   const [newImageFile, setNewImageFile] = useState<File | null>(null);
   const [activeTab, setActiveTab] = useState<'profile' | 'dialogue' | 'world'>('profile');
   const [newTag, setNewTag] = useState('');
+  
+  // Expanded Editor state
+  const [expandedField, setExpandedField] = useState<{ title: string; field: string; index?: number } | null>(null);
 
   const updateField = (field: keyof CharacterDataV2, value: any) => setData(prev => ({ ...prev, [field]: value }));
 
@@ -63,8 +108,7 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
   };
 
   const handleExportJSON = () => {
-    // 按照 SillyTavern 标准包装
-    const exportData = {
+    const exportWrapper = {
       name: data.name,
       description: data.description,
       personality: data.personality,
@@ -74,12 +118,9 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
       creatorcomment: data.creator_notes,
       spec: "chara_card_v2",
       spec_version: "2.0",
-      data: {
-        ...data,
-        tags: [] // 移除本地标签
-      }
+      data: data
     };
-    const blob = new Blob([JSON.stringify(exportWrapper(exportData), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(exportWrapper, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -88,13 +129,6 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
     URL.revokeObjectURL(url);
   };
 
-  // 包装函数辅助
-  const exportWrapper = (d: any) => {
-    // 某些版本需要 root level 也有基础信息
-    return d;
-  };
-
-  // Tag Helpers
   const addTag = (tag: string) => {
     const trimmed = tag.trim();
     if (trimmed && !data.tags.includes(trimmed)) {
@@ -103,23 +137,15 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
     }
   };
 
-  // Alternate Greetings Helpers
-  const addGreeting = () => {
-    updateField('alternate_greetings', [...(data.alternate_greetings || []), '']);
-  };
+  const addGreeting = () => updateField('alternate_greetings', [...(data.alternate_greetings || []), '']);
   const updateGreeting = (index: number, val: string) => {
     const copy = [...(data.alternate_greetings || [])];
     copy[index] = val;
     updateField('alternate_greetings', copy);
   };
-  const removeGreeting = (index: number) => {
-    updateField('alternate_greetings', (data.alternate_greetings || []).filter((_, i) => i !== index));
-  };
+  const removeGreeting = (index: number) => updateField('alternate_greetings', (data.alternate_greetings || []).filter((_, i) => i !== index));
 
-  // World Book Helpers
-  const updateWorldName = (val: string) => {
-    updateField('character_book', { ...(data.character_book || { entries: [] }), name: val });
-  };
+  const updateWorldName = (val: string) => updateField('character_book', { ...(data.character_book || { entries: [] }), name: val });
   const addWorldEntry = () => {
     const entries = [...(data.character_book?.entries || [])];
     entries.push({ comment: 'NEW ENTRY', content: '', keys: [], enabled: true });
@@ -136,6 +162,26 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
   };
 
   const unselectedTags = availableTags.filter(t => !data.tags.includes(t));
+
+  const handleExpandedChange = (val: string) => {
+    if (!expandedField) return;
+    const { field, index } = expandedField;
+    if (field === 'alternate_greetings' && index !== undefined) {
+      updateGreeting(index, val);
+    } else if (field === 'world_entry' && index !== undefined) {
+      updateWorldEntry(index, 'content', val);
+    } else {
+      updateField(field as keyof CharacterDataV2, val);
+    }
+  };
+
+  const getExpandedValue = () => {
+    if (!expandedField) return '';
+    const { field, index } = expandedField;
+    if (field === 'alternate_greetings' && index !== undefined) return data.alternate_greetings[index];
+    if (field === 'world_entry' && index !== undefined) return data.character_book?.entries[index].content;
+    return (data as any)[field] || '';
+  };
 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-0 md:p-8 bg-slate-950/95 backdrop-blur-md">
@@ -169,7 +215,7 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
         </div>
 
         <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
-          {/* Left Sidebar: Image & Tags */}
+          {/* Left Sidebar */}
           <div className="w-full md:w-72 bg-slate-950 border-b md:border-r border-slate-800 p-6 flex flex-row md:flex-col gap-6 overflow-x-auto md:overflow-y-auto shrink-0 scrollbar-hide">
             <div className="w-28 md:w-full shrink-0">
               <div className="aspect-[3/4] rounded border border-slate-800 overflow-hidden relative group bg-slate-900 shadow-inner">
@@ -201,45 +247,18 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
                   ))}
                   {data.tags.length === 0 && <div className="text-[9px] text-slate-700 italic font-mono">UNTAGGED</div>}
                 </div>
-                
-                <div className="space-y-3">
-                  <div className="flex gap-1">
-                    <input 
-                      value={newTag} 
-                      onChange={e => setNewTag(e.target.value)} 
-                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addTag(newTag))}
-                      placeholder="NEW_TAG..." 
-                      className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-[10px] flex-1 focus:outline-none focus:border-cyan-500/50 uppercase font-mono text-slate-300" 
-                    />
-                    <button onClick={() => addTag(newTag)} className="p-1.5 bg-slate-800 text-cyan-400 rounded border border-slate-700 hover:bg-slate-700"><Plus size={14}/></button>
-                  </div>
-
-                  {unselectedTags.length > 0 && (
-                    <div>
-                      <div className="text-[8px] font-mono text-slate-600 uppercase mb-2">Recent:</div>
-                      <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto scrollbar-hide">
-                        {unselectedTags.map(tag => (
-                          <button 
-                            key={tag} 
-                            onClick={() => addTag(tag)}
-                            className="bg-slate-900/50 hover:bg-cyan-500/10 hover:text-cyan-400 border border-slate-800 text-slate-500 px-1.5 py-0.5 rounded text-[8px] font-mono uppercase transition-colors"
-                          >
-                            {tag}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                <div className="flex gap-1">
+                  <input value={newTag} onChange={e => setNewTag(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addTag(newTag))} placeholder="NEW_TAG..." className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-[10px] flex-1 focus:outline-none focus:border-cyan-500/50 uppercase font-mono text-slate-300" />
+                  <button onClick={() => addTag(newTag)} className="p-1.5 bg-slate-800 text-cyan-400 rounded border border-slate-700 hover:bg-slate-700"><Plus size={14}/></button>
                 </div>
               </div>
-              <div className="pt-4 border-t border-slate-900">
-                <div className="text-[9px] font-mono text-slate-600 mb-1 uppercase">Rev: {data.character_version || '1'}</div>
-                <div className="text-[9px] font-mono text-slate-600 uppercase">Auth: {data.creator || 'UNKNOWN'}</div>
+              <div className="pt-4 border-t border-slate-900 text-[9px] font-mono text-slate-600 uppercase">
+                Rev: {data.character_version || '1'}<br/>Auth: {data.creator || 'UNKNOWN'}
               </div>
             </div>
           </div>
 
-          {/* Right Content Area: Tabs & Fields */}
+          {/* Right Content Area */}
           <div className="flex-1 flex flex-col overflow-hidden bg-slate-900/30">
             <div className="flex border-b border-slate-800 overflow-x-auto shrink-0 bg-slate-950/50">
               {[
@@ -252,8 +271,7 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
                   onClick={() => setActiveTab(tab.id as any)} 
                   className={`px-6 py-4 font-mono text-[10px] font-bold uppercase tracking-[0.2em] border-b-2 transition-all flex items-center gap-2 shrink-0 ${activeTab === tab.id ? 'border-cyan-500 text-cyan-400 bg-cyan-500/5' : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/30'}`}
                 >
-                  <tab.icon size={14} />
-                  <span>{tab.label}</span>
+                  <tab.icon size={14} /> <span>{tab.label}</span>
                 </button>
               ))}
             </div>
@@ -263,7 +281,10 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
                 <>
                   <section>
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Identity Synopsis</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Identity Synopsis</h3>
+                        <button onClick={() => setExpandedField({ title: 'CREATOR NOTES', field: 'creator_notes' })} className="p-1 text-slate-600 hover:text-cyan-400 transition-colors"><Maximize2 size={12}/></button>
+                      </div>
                       <CopyButton text={data.creator_notes} />
                     </div>
                     <textarea 
@@ -275,7 +296,10 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
                   </section>
                   <section>
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Core Description</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Core Description</h3>
+                        <button onClick={() => setExpandedField({ title: 'CHARACTER DESCRIPTION', field: 'description' })} className="p-1 text-slate-600 hover:text-cyan-400 transition-colors"><Maximize2 size={12}/></button>
+                      </div>
                       <CopyButton text={data.description} />
                     </div>
                     <textarea 
@@ -295,6 +319,7 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
                       <div className="flex items-center gap-2">
                         <Quote size={14} className="text-cyan-500 opacity-50" />
                         <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Standard Opening</h3>
+                        <button onClick={() => setExpandedField({ title: 'MAIN GREETING', field: 'first_mes' })} className="p-1 text-slate-600 hover:text-cyan-400 transition-colors"><Maximize2 size={12}/></button>
                       </div>
                       <CopyButton text={data.first_mes} />
                     </div>
@@ -311,31 +336,18 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
                         <MessageSquare size={14} className="text-cyan-500 opacity-50" />
                         <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Alternative Openings</h3>
                       </div>
-                      <button 
-                        onClick={addGreeting}
-                        className="text-[9px] font-mono px-3 py-1.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 transition-colors uppercase font-bold"
-                      >
-                        + ADD_OPENING
-                      </button>
+                      <button onClick={addGreeting} className="text-[9px] font-mono px-3 py-1.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 transition-colors uppercase font-bold">+ ADD_OPENING</button>
                     </div>
-                    
                     <div className="space-y-4">
                       {data.alternate_greetings?.map((msg, idx) => (
                         <div key={idx} className="relative group bg-slate-950 border border-slate-800 rounded-md overflow-hidden">
                           <div className="absolute top-2 right-2 flex gap-2">
+                             <button onClick={() => setExpandedField({ title: `ALT GREETING #${idx+1}`, field: 'alternate_greetings', index: idx })} className="p-1.5 text-slate-600 hover:text-cyan-400 bg-slate-900 rounded opacity-0 group-hover:opacity-100 transition-opacity"><Maximize2 size={12}/></button>
                              <CopyButton text={msg} />
-                             <button onClick={() => removeGreeting(idx)} className="p-1.5 text-slate-600 hover:text-red-500 bg-slate-900 rounded transition-colors opacity-0 group-hover:opacity-100">
-                              <Trash2 size={12}/>
-                            </button>
+                             <button onClick={() => removeGreeting(idx)} className="p-1.5 text-slate-600 hover:text-red-500 bg-slate-900 rounded transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={12}/></button>
                           </div>
-                          <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 text-[8px] font-mono text-slate-600 uppercase">
-                            VARIATION_{String(idx + 1).padStart(2, '0')}
-                          </div>
-                          <textarea 
-                            value={msg} 
-                            onChange={e => updateGreeting(idx, e.target.value)} 
-                            className="w-full h-24 bg-transparent p-4 text-xs text-slate-400 focus:outline-none font-sans italic resize-none leading-relaxed"
-                          />
+                          <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 text-[8px] font-mono text-slate-600 uppercase">VARIATION_{String(idx + 1).padStart(2, '0')}</div>
+                          <textarea value={msg} onChange={e => updateGreeting(idx, e.target.value)} className="w-full h-24 bg-transparent p-4 text-xs text-slate-400 focus:outline-none font-sans italic resize-none leading-relaxed" />
                         </div>
                       ))}
                     </div>
@@ -346,58 +358,28 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
               {activeTab === 'world' && (
                 <div className="space-y-6">
                   <section className="bg-slate-950 border border-slate-800 rounded-lg p-6 mb-8">
-                    <div className="flex items-center gap-2 mb-4">
-                      <Database size={14} className="text-cyan-500" />
-                      <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">World Identity</h3>
-                    </div>
                     <div className="flex flex-col gap-2">
                       <label className="text-[8px] font-mono text-slate-600 uppercase">World Book Name</label>
-                      <input 
-                        value={data.character_book?.name || ''} 
-                        onChange={e => updateWorldName(e.target.value)} 
-                        placeholder="WORLD_TITLE"
-                        className="bg-slate-900 border border-slate-800 rounded px-4 py-2.5 text-sm text-cyan-400 focus:outline-none focus:border-cyan-500/50 uppercase font-mono shadow-inner" 
-                      />
+                      <input value={data.character_book?.name || ''} onChange={e => updateWorldName(e.target.value)} placeholder="WORLD_TITLE" className="bg-slate-900 border border-slate-800 rounded px-4 py-2.5 text-sm text-cyan-400 focus:outline-none focus:border-cyan-500/50 uppercase font-mono shadow-inner" />
                     </div>
                   </section>
-
                   <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <BookOpen size={16} className="text-cyan-500 opacity-50" />
-                      <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Knowledge Entries</h3>
-                    </div>
-                    <button 
-                      onClick={addWorldEntry}
-                      className="text-[9px] font-mono px-3 py-1.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 transition-colors uppercase font-bold"
-                    >
-                      + ADD_LORE
-                    </button>
+                    <h3 className="text-cyan-500 font-mono text-[10px] font-bold uppercase tracking-[0.3em]">Knowledge Entries</h3>
+                    <button onClick={addWorldEntry} className="text-[9px] font-mono px-3 py-1.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded hover:bg-cyan-500/20 transition-colors uppercase font-bold">+ ADD_LORE</button>
                   </div>
-
                   <div className="space-y-6">
                     {(data.character_book?.entries || []).map((entry, idx) => (
                       <div key={idx} className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden shadow-lg group">
                         <div className="bg-slate-900/80 px-4 py-2 border-b border-slate-800 flex items-center justify-between">
-                          <input 
-                            value={entry.comment || ''} 
-                            onChange={e => updateWorldEntry(idx, 'comment', e.target.value)}
-                            placeholder="ENTRY_NAME"
-                            className="bg-transparent text-[10px] font-mono font-bold text-cyan-400 focus:outline-none uppercase w-full"
-                          />
+                          <input value={entry.comment || ''} onChange={e => updateWorldEntry(idx, 'comment', e.target.value)} placeholder="ENTRY_NAME" className="bg-transparent text-[10px] font-mono font-bold text-cyan-400 focus:outline-none uppercase w-full" />
                           <div className="flex items-center gap-2">
+                            <button onClick={() => setExpandedField({ title: `LORE: ${entry.comment || 'Unnamed'}`, field: 'world_entry', index: idx })} className="p-1.5 text-slate-600 hover:text-cyan-400 transition-colors"><Maximize2 size={12}/></button>
                             <CopyButton text={entry.content || ''} />
-                            <button onClick={() => removeWorldEntry(idx)} className="text-slate-600 hover:text-red-500 p-1 transition-colors">
-                              <Trash2 size={14}/>
-                            </button>
+                            <button onClick={() => removeWorldEntry(idx)} className="text-slate-600 hover:text-red-500 p-1 transition-colors"><Trash2 size={14}/></button>
                           </div>
                         </div>
                         <div className="p-4 bg-slate-950">
-                          <textarea 
-                            value={entry.content || ''} 
-                            onChange={e => updateWorldEntry(idx, 'content', e.target.value)}
-                            placeholder="Lore content, rules, or definitions..."
-                            className="w-full h-32 bg-slate-900/50 border border-slate-800 rounded p-3 text-xs text-slate-300 focus:outline-none focus:border-cyan-500/30 font-sans resize-none leading-relaxed"
-                          />
+                          <textarea value={entry.content || ''} onChange={e => updateWorldEntry(idx, 'content', e.target.value)} placeholder="Lore content..." className="w-full h-32 bg-slate-900/50 border border-slate-800 rounded p-3 text-xs text-slate-300 focus:outline-none focus:border-cyan-500/30 font-sans resize-none leading-relaxed" />
                         </div>
                       </div>
                     ))}
@@ -408,6 +390,15 @@ export const DossierView: React.FC<DossierViewProps> = ({ initialData, initialIm
           </div>
         </div>
       </div>
+
+      {expandedField && (
+        <FullscreenEditor 
+          title={expandedField.title}
+          value={getExpandedValue()}
+          onChange={handleExpandedChange}
+          onClose={() => setExpandedField(null)}
+        />
+      )}
     </div>
   );
 };

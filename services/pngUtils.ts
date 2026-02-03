@@ -65,9 +65,7 @@ async function decompressZlib(data: Uint8Array): Promise<Uint8Array> {
   try {
     const ds = new DecompressionStream('deflate');
     const writer = ds.writable.getWriter();
-    const ab = new ArrayBuffer(data.byteLength);
-new Uint8Array(ab).set(data);
-writer.write(ab);
+    writer.write(data);
     writer.close();
     const output = [];
     const reader = ds.readable.getReader();
@@ -94,11 +92,9 @@ writer.write(ab);
  * 核心解析函数：支持从 PNG 块或 JSON 文件提取角色数据
  */
 export async function extractCharacterData(file: File): Promise<{ data: CharacterDataV2; imageBlob: Blob }> {
-  // 如果是 JSON 文件直接解析
   if (file.type === 'application/json' || file.name.endsWith('.json')) {
     const text = await file.text();
     const raw = JSON.parse(text);
-    // 生成一个透明占位图
     const placeholder = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 10, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]);
     return { data: normalizeCharacterData(raw), imageBlob: new Blob([placeholder], { type: 'image/png' }) };
   }
@@ -125,13 +121,11 @@ export async function extractCharacterData(file: File): Promise<{ data: Characte
         if (type === 'tEXt') {
           base64Data = new TextDecoder().decode(chunkData.slice(nullIndex + 1));
         } else {
-          // iTXt 结构
           const isCompressed = chunkData[nullIndex + 1] === 1;
-          // 跳过 flag, method, lang tag(null), trans keyword(null)
           let textStart = nullIndex + 3;
-          while (textStart < chunkData.length && chunkData[textStart] !== 0) textStart++; // lang
+          while (textStart < chunkData.length && chunkData[textStart] !== 0) textStart++; 
           textStart++;
-          while (textStart < chunkData.length && chunkData[textStart] !== 0) textStart++; // trans
+          while (textStart < chunkData.length && chunkData[textStart] !== 0) textStart++; 
           textStart++;
           
           const rawTextData = chunkData.slice(textStart);
@@ -163,14 +157,9 @@ export async function extractCharacterData(file: File): Promise<{ data: Characte
   }
 }
 
-/**
- * 深度解析并规约角色数据，确保覆盖所有可能的层级 (V1/V2/V3)
- */
 function normalizeCharacterData(raw: any): CharacterDataV2 {
-  // 查找核心数据节点
   const data = raw.data || raw;
 
-  // 1. 提取基础文本字段
   const getField = (keys: string[], fallback = '') => {
     for (const k of keys) {
       if (data[k] !== undefined && data[k] !== null) return String(data[k]);
@@ -179,7 +168,6 @@ function normalizeCharacterData(raw: any): CharacterDataV2 {
     return fallback;
   };
 
-  // 2. 提取数组 (多开场白等)
   const getArray = (keys: string[]) => {
     for (const k of keys) {
       if (Array.isArray(data[k])) return data[k];
@@ -188,7 +176,6 @@ function normalizeCharacterData(raw: any): CharacterDataV2 {
     return [];
   };
 
-  // 3. 提取世界书 (World Book / Character Book)
   const getBook = () => {
     const book = data.character_book || raw.character_book || 
                  data.world_book || raw.world_book || 
@@ -227,16 +214,29 @@ function normalizeCharacterData(raw: any): CharacterDataV2 {
 
 /**
  * 构建符合 SillyTavern V2 规范的 PNG 文件
+ * 必须包含 root level 的基础字段和嵌套的 data 对象
  */
 export async function createCharacterPNG(imageBlob: Blob, data: CharacterDataV2): Promise<Blob> {
   const arrayBuffer = await imageBlob.arrayBuffer();
   const uint8Array = new Uint8Array(arrayBuffer);
   
-  // Encode character data to Base64 (SillyTavern spec)
-  const jsonString = JSON.stringify(data);
+  // Wrap data in SillyTavern V2 compatible structure
+  const stWrapper = {
+    name: data.name,
+    description: data.description,
+    personality: data.personality,
+    scenario: data.scenario,
+    first_mes: data.first_mes,
+    mes_example: data.mes_example,
+    creator_notes: data.creator_notes,
+    spec: "chara_card_v2",
+    spec_version: "2.0",
+    data: data
+  };
+
+  const jsonString = JSON.stringify(stWrapper);
   const base64Data = btoa(unescape(encodeURIComponent(jsonString)));
   
-  // Prepare 'chara' keyword tEXt chunk
   const encoder = new TextEncoder();
   const keyword = "chara";
   const chunkType = "tEXt";
@@ -245,7 +245,7 @@ export async function createCharacterPNG(imageBlob: Blob, data: CharacterDataV2)
   const contentBytes = encoder.encode(base64Data);
   const chunkData = new Uint8Array(keywordBytes.length + 1 + contentBytes.length);
   chunkData.set(keywordBytes, 0);
-  chunkData[keywordBytes.length] = 0; // Null separator
+  chunkData[keywordBytes.length] = 0; 
   chunkData.set(contentBytes, keywordBytes.length + 1);
   
   const chunkTypeBytes = encoder.encode(chunkType);
@@ -261,11 +261,9 @@ export async function createCharacterPNG(imageBlob: Blob, data: CharacterDataV2)
   const crcBytes = new Uint8Array(4);
   new DataView(crcBytes.buffer).setUint32(0, crc);
   
-  // Find insertion point after IHDR chunk
-  // PNG Header is 8 bytes. IHDR is always first.
   const ihdrOffset = 8;
   const ihdrDataLength = new DataView(uint8Array.buffer).getUint32(ihdrOffset);
-  const insertOffset = ihdrOffset + 4 + 4 + ihdrDataLength + 4; // Header + Length + Type + Data + CRC
+  const insertOffset = ihdrOffset + 4 + 4 + ihdrDataLength + 4; 
   
   const result = new Uint8Array(uint8Array.length + 4 + 4 + chunkData.length + 4);
   result.set(uint8Array.slice(0, insertOffset), 0);
